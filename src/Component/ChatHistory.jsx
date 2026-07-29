@@ -1,91 +1,26 @@
-import React, { useState, useEffect, memo } from "react";
+import { useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { dracula } from "react-syntax-highlighter/dist/esm/styles/prism";
-import TypingEffect from "./TypingEffect";
+import remarkGfm from "remark-gfm";
+import { FiCopy, FiRefreshCw, FiThumbsDown, FiThumbsUp } from "react-icons/fi";
+import { HiOutlineSparkles } from "react-icons/hi2";
 
-const ChatHistory = memo(({ chatHistory, isLoading }) => {
-  const [typingIndex, setTypingIndex] = useState(null);
+function ChatHistory({ messages, streaming, onRetry }) {
+  const endRef = useRef(null);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [messages]);
+  const copy = (content) => navigator.clipboard.writeText(content);
 
-  useEffect(() => {
-    const aiMessages = chatHistory.filter((message) => message.type === "ai");
-
-    if (aiMessages.length > 0) {
-      const lastAiMessageIndex = chatHistory.findIndex(
-        (msg) => msg.type === "ai" && msg === aiMessages[aiMessages.length - 1]
-      );
-
-      if (lastAiMessageIndex !== -1) {
-        setTypingIndex(lastAiMessageIndex);
-      }
-    }
-  }, [chatHistory]);
-
-  const handleTypingComplete = () => {
-    setTypingIndex(null);
-  };
-
-  return (
-    <div className="flex flex-col mx-auto">
-      {chatHistory.map((message, index) => (
-        <div
-          key={index}
-          className={`flex items-start py-2 px-4 rounded-lg m-2 font-chattext ${
-            message.type === "user"
-              ? "text-[#e8e8e8] mr-auto self-start max-w-[70%] lg:max-w-[50%]"
-              : "text-[#aeaab1] mr-auto self-start"
-          }`}
-        >
-          <span className="mr-2 text-[#6E8EF5]">
-            {message.type === "user" ? "You" : "AI"}:
-          </span>
-          <div
-            style={{
-              background: message.type === "ai" ? "black" : "transparent",
-              padding: message.type === "ai" ? "17px" : "0",
-              borderRadius: message.type === "ai" ? "10px" : "0",
-            }}
-          >
-            {message.type === "ai" && typingIndex === index ? (
-              <TypingEffect text={message.message} onTypingComplete={handleTypingComplete} />
-            ) : (
-              <ReactMarkdown
-                components={{
-                  code({ node, inline, className, children, ...props }) {
-                    return !inline ? (
-                      <SyntaxHighlighter
-                        style={dracula}
-                        language={className?.replace("language-", "")}
-                        PreTag="div"
-                        showLineNumbers={true}
-                        wrapLongLines={true}
-                        customStyle={{
-                          whiteSpace: "pre-wrap",
-                          overflowX: "auto",
-                          overflowY: "auto",
-                          textAlign: "center",
-                          fontSize: "1em",
-                        }}
-                        {...props}
-                      >
-                        {String(children).replace(/\n$/, "")}
-                      </SyntaxHighlighter>
-                    ) : (
-                      <code className={className} {...props}>
-                        {children}
-                      </code>
-                    );
-                  },
-                }}
-              >
-                {message.message}
-              </ReactMarkdown>
-            )}
-          </div>
+  return <div className="message-list">
+    {messages.map((message, index) => message.role === "user" ? (
+      <article className="message user-message" key={message.id}><div className="user-bubble">{message.content}</div></article>
+    ) : (
+      <article className="message assistant-message" key={message.id}>
+        <div className="assistant-avatar"><HiOutlineSparkles /></div>
+        <div className="assistant-body"><div className="message-meta"><strong>FindBot</strong><span>LOCAL CORE</span></div>
+          <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || ""}</ReactMarkdown>{streaming && index === messages.length - 1 && <span className="cursor" />}</div>
+          {message.content && <div className="message-actions"><button aria-label="Copy answer" onClick={() => copy(message.content)}><FiCopy /></button><button aria-label="Good answer"><FiThumbsUp /></button><button aria-label="Bad answer"><FiThumbsDown /></button><button aria-label="Retry answer" onClick={onRetry}><FiRefreshCw /></button></div>}
         </div>
-      ))}
-    </div>
-  );
-});
-
+      </article>
+    ))}<div ref={endRef} />
+  </div>;
+}
 export default ChatHistory;

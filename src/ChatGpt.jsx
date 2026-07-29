@@ -1,389 +1,169 @@
-import { useState, useEffect, useRef } from "react";
-import { BsSend, BsFillGearFill, BsPaperclip } from "react-icons/bs";
-import { AiOutlineClose } from "react-icons/ai";
-import { FaFilePdf } from "react-icons/fa";
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
-import workerPath from "pdfjs-dist/build/pdf.worker.mjs?url";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FiArrowUp, FiChevronDown, FiEdit3, FiMenu, FiMessageSquare,
+  FiPlus, FiRefreshCw, FiSearch, FiSettings, FiTrash2, FiX,
+} from "react-icons/fi";
+import { HiOutlineSparkles } from "react-icons/hi2";
+import ChatHistory from "./Component/ChatHistory";
 
-import ChatHistory from "./Component/ChatHistory.jsx";
-import Loading from "./Component/Loading.jsx";
-
-// Configure PDFJS worker
-GlobalWorkerOptions.workerSrc = workerPath;
+const SYSTEM_PROMPT = `You are FindBot, a thoughtful, accurate and practical AI assistant. Answer in the user's language. Think carefully, explain clearly, use concise structure, admit uncertainty, and never fabricate facts.`;
+const STARTERS = [
+  { icon: "✦", title: "Create something", prompt: "Help me turn an ambitious idea into a practical step-by-step plan." },
+  { icon: "⌁", title: "Learn anything", prompt: "Teach me a difficult concept using a simple analogy and examples." },
+  { icon: "◈", title: "Solve a problem", prompt: "Help me reason through a problem. Ask for the missing context first." },
+  { icon: "↗", title: "Improve my work", prompt: "Review my work and suggest the highest-impact improvements." },
+];
+const newChat = () => ({ id: crypto.randomUUID(), title: "New exploration", createdAt: Date.now(), messages: [] });
 
 function ChatGpt() {
-  const [userInput, setUserInput] = useState("");
-  const [chatHistory, setChatHistory] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [questionsList, setQuestionsList] = useState([]);
-  const [typingMessage, setTypingMessage] = useState("");
-  const [isInteracting, setIsInteracting] = useState(false);
-  const [hasShownTypingEffect, setHasShownTypingEffect] = useState(false);
-  const [isSidebarVisible, setIsSidebarVisible] = useState(false);
-  const typingTimeoutRef = useRef(null);
-  const [selectedFile, setSelectedFile] = useState(null);
+  const [chats, setChats] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("findbot-chats")) || [newChat()]; }
+    catch { return [newChat()]; }
+  });
+  const [activeId, setActiveId] = useState(() => localStorage.getItem("findbot-active") || chats[0].id);
+  const [input, setInput] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [status, setStatus] = useState({ online: false, model: "llama3.2:3b", checking: true });
+  const [error, setError] = useState("");
+  const textareaRef = useRef(null);
+  const abortRef = useRef(null);
 
-  // ✅ Added user state for registration info
-  const [user, setUser] = useState(null);
+  const activeChat = useMemo(() => chats.find((chat) => chat.id === activeId) || chats[0], [chats, activeId]);
+  const updateActive = useCallback((updater) => {
+    setChats((current) => current.map((chat) => chat.id === activeChat.id ? updater(chat) : chat));
+  }, [activeChat.id]);
 
-  const genAI = new GoogleGenerativeAI("AIzaSyAsuSdt8N9UETIGkE9yNsYjbetG5wRx9hk");
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+  useEffect(() => {
+    localStorage.setItem("findbot-chats", JSON.stringify(chats.slice(0, 30)));
+    localStorage.setItem("findbot-active", activeId);
+  }, [chats, activeId]);
 
-  const fileToBase64 = (file) => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = (error) => reject(error);
+  const checkStatus = useCallback(async () => {
+    try {
+      const response = await fetch("/api/health");
+      const data = await response.json();
+      setStatus({ online: response.ok && data.ok, model: data.model || "Local model", checking: false });
+    } catch { setStatus((value) => ({ ...value, online: false, checking: false })); }
+  }, []);
+  useEffect(() => { checkStatus(); }, [checkStatus]);
+
+  const createChat = () => {
+    const chat = newChat();
+    setChats((current) => [chat, ...current]);
+    setActiveId(chat.id);
+    setSidebarOpen(false);
+    setError("");
+  };
+
+  const deleteChat = (id) => {
+    setChats((current) => {
+      const remaining = current.filter((chat) => chat.id !== id);
+      const next = remaining.length ? remaining : [newChat()];
+      if (id === activeId) setActiveId(next[0].id);
+      return next;
     });
   };
 
-  const extractTextFromPDF = async (file) => {
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await getDocument({ data: arrayBuffer }).promise;
-    let fullText = "";
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items.map((item) => item.str).join(" ");
-      fullText += pageText + "\n";
-    }
-    return fullText;
-  };
-
-  const sendMessage = async () => {
-    if (userInput.trim() === "" && !selectedFile) return;
-
-    setIsLoading(true);
-    setIsInteracting(true);
-    clearTypingEffect();
-
-    let inputText = userInput;
+  const sendMessage = async (override) => {
+    const content = String(override ?? input).trim();
+    if (!content || isSending) return;
+    const userMessage = { id: crypto.randomUUID(), role: "user", content };
+    const assistantId = crypto.randomUUID();
+    const history = [...activeChat.messages, userMessage];
+    updateActive((chat) => ({
+      ...chat,
+      title: chat.messages.length ? chat.title : content.slice(0, 42),
+      messages: [...history, { id: assistantId, role: "assistant", content: "" }],
+    }));
+    setInput("");
+    setError("");
+    setIsSending(true);
+    abortRef.current = new AbortController();
 
     try {
-      if (selectedFile) {
-        if (selectedFile.type.startsWith("image/")) {
-          const base64Image = await fileToBase64(selectedFile);
-          const result = await model.generateContent([
-            `User message: ${userInput || "Please analyze this image."}`,
-            {
-              inlineData: {
-                mimeType: selectedFile.type,
-                data: base64Image.split(",")[1],
-              },
-            },
-          ]);
-          const response = await result.response;
-          setChatHistory((prev) => [
-            ...prev,
-            { type: "user", message: inputText, file: selectedFile },
-            { type: "bot", message: response.text() },
-          ]);
-        } else if (selectedFile.type === "application/pdf") {
-          const pdfText = await extractTextFromPDF(selectedFile);
-          const fullPrompt = `User message: ${userInput || "Please analyze this document."}\n\nPDF Content:\n${pdfText}`;
-          const result = await model.generateContent(fullPrompt);
-          const response = await result.response;
-          setChatHistory((prev) => [
-            ...prev,
-            { type: "user", message: inputText, file: selectedFile },
-            { type: "bot", message: response.text() },
-          ]);
-        }
-      } else {
-        const result = await model.generateContent(inputText);
-        const response = await result.response;
-        setChatHistory((prev) => [
-          ...prev,
-          { type: "user", message: inputText },
-          { type: "bot", message: response.text() },
-        ]);
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: status.model,
+          messages: [{ role: "system", content: SYSTEM_PROMPT }, ...history.map(({ role, content: text }) => ({ role, content: text }))],
+        }),
+        signal: abortRef.current.signal,
+      });
+      if (!response.ok || !response.body) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail || body.error || "Model request failed");
       }
-
-      setQuestionsList((prevList) => [...prevList, inputText]);
-      setUserInput("");
-      setSelectedFile(null);
-    } catch (error) {
-      console.error("Error sending message", error);
-    } finally {
-      setIsLoading(false);
-      setIsInteracting(false);
-    }
-  };
-
-  const handleKeyPress = (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      sendMessage();
-    }
-  };
-
-    // ✅ Use user name in typing message
-    const typeTypingMessage = () => {
-      const message = `Hello, how are you  ${user?.name}?`;
-      let index = -1;
-      const typingSpeed = 100;
-      const typingInterval = setInterval(() => {
-        if (index < message.length) {
-          setTypingMessage((prev) => prev + message[index]);
-          index++;
-        } else {
-          clearInterval(typingInterval);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let reading = true;
+      while (reading) {
+        const { done, value } = await reader.read();
+        if (done) {
+          reading = false;
+          continue;
         }
-      }, typingSpeed);
-      
-    };
-
-  const clearTypingEffect = () => {
-    setTypingMessage("");
-    clearTimeout(typingTimeoutRef.current);
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const chunk = JSON.parse(line);
+          const token = chunk.message?.content || "";
+          if (token) updateActive((chat) => ({ ...chat, messages: chat.messages.map((message) => message.id === assistantId ? { ...message, content: message.content + token } : message) }));
+        }
+      }
+    } catch (requestError) {
+      if (requestError.name !== "AbortError") {
+        setError(`Core offline: ${requestError.message}. Start Ollama and pull the configured model.`);
+        updateActive((chat) => ({ ...chat, messages: chat.messages.filter((message) => message.id !== assistantId) }));
+      }
+    } finally { setIsSending(false); abortRef.current = null; checkStatus(); }
   };
 
-
-  
-useEffect(() => {
-  if (user && !isInteracting && !hasShownTypingEffect) {
-    typingTimeoutRef.current = setTimeout(() => {
-      typeTypingMessage();
-      setHasShownTypingEffect(true);
-    }, 1000);
-  } else if (isInteracting) {
-    clearTypingEffect();
-  }
-
-  return () => clearTimeout(typingTimeoutRef.current);
-}, [user, isInteracting, hasShownTypingEffect]);
-
-  const clearChat = () => {
-    setChatHistory([]);
-    setQuestionsList([]);
-    setIsInteracting(false);
-    clearTypingEffect();
+  const handleInput = (event) => {
+    setInput(event.target.value);
+    event.target.style.height = "auto";
+    event.target.style.height = `${Math.min(event.target.scrollHeight, 180)}px`;
   };
 
-  const handleQuestionClick = async (question) => {
-    setUserInput(question);
-    await sendMessage();
+  const retryLast = () => {
+    const lastUser = [...activeChat.messages].reverse().find((message) => message.role === "user");
+    if (lastUser) sendMessage(lastUser.content);
   };
-
-  // ✅ If user is not registered, show registration form
-  if (!user) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-[#1E1E1E] text-white px-4">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            const formData = new FormData(e.target);
-            const name = formData.get("username");
-            const image = formData.get("avatar");
-            if (name && image) {
-              setUser({ name, image });
-            }
-          }}
-          className="bg-[#2C2F33] p-8 rounded-lg shadow-lg space-y-4 w-full max-w-md"
-        >
-          <h2 className="text-2xl font-bold text-[#7289DA]">Welcome to TalkBot</h2>
-          <input
-            type="text"
-            name="username"
-            placeholder="Enter your name"
-            className="w-full px-4 py-2 rounded bg-[#23272A] text-white focus:outline-none"
-            required
-          />
-          <input
-            type="file"
-            name="avatar"
-            accept="image/*"
-            className="w-full text-white"
-            required
-          />
-          <button
-            type="submit"
-            className="w-full py-2 bg-[#7289DA] text-white rounded hover:bg-[#5a73b7]"
-          >
-            Continue
-          </button>
-        </form>
-      </div>
-    );
-  }
 
   return (
-    <div className="w-full h-screen bg-[#1E1E1E] flex flex-col md:flex-row">
-    
+    <main className="app-shell">
+      <div className="aurora aurora-one" /><div className="aurora aurora-two" /><div className="noise" />
+      {sidebarOpen && <button className="mobile-backdrop" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />}
+      <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
+        <div className="brand-row"><div className="brand-mark"><HiOutlineSparkles /></div><div><strong>FindBot</strong><span>Intelligence, amplified</span></div><button className="icon-button sidebar-close" aria-label="Close navigation" onClick={() => setSidebarOpen(false)}><FiX /></button></div>
+        <button className="new-chat" onClick={createChat}><FiPlus /> New exploration <kbd>⌘ K</kbd></button>
+        <div className="search-box"><FiSearch /><input aria-label="Search conversations" placeholder="Search conversations" /></div>
+        <div className="history-label">Recent transmissions</div>
+        <nav className="history-list">
+          {chats.map((chat) => <div key={chat.id} className={`history-item ${chat.id === activeChat.id ? "active" : ""}`}><button onClick={() => { setActiveId(chat.id); setSidebarOpen(false); }}><FiMessageSquare /><span>{chat.title}</span></button><button className="delete-chat" aria-label={`Delete ${chat.title}`} onClick={() => deleteChat(chat.id)}><FiTrash2 /></button></div>)}
+        </nav>
+        <div className="sidebar-footer"><button><FiSettings /><span>Preferences</span></button><div className="model-status"><i className={status.online ? "online" : ""} /><div><strong>{status.checking ? "Scanning core…" : status.online ? "Neural core online" : "Neural core offline"}</strong><span>{status.model}</span></div><button aria-label="Recheck model" onClick={checkStatus}><FiRefreshCw /></button></div></div>
+      </aside>
 
-      {/* Existing Chatbot UI Starts Here */}
-      <div className="w-full md:w-[80%] h-full backdrop-blur-sm flex flex-col bg-[#1E1E1E] justify-between">
-          {/* ✅ Navbar with user info */}
-      <div className="w-full bg-[#23272A] flex items-center px-4 py-2 shadow-md">
-        <img
-          src={URL.createObjectURL(user.image)}
-          alt="User Avatar"
-          className="w-10 h-10 rounded-full mr-4"
-        />
-        <span className="text-white font-semibold">Welcome, {user.name}</span>
-      </div>
-
-        <div className="flex-grow overflow-y-auto p-4 flex flex-col w-full max-w-full md:max-w-[90%]">
-          <div className="w-full mb-4">
-            {!isInteracting && typingMessage && (
-              <h1 className="text-transparent bg-clip-text bg-gradient-to-r from-[#8ba0ff] to-[#603679] text-2xl md:text-4xl font-semibold text-center mt-[20%]">
-              Hello, how are you  {user.name}
-              </h1>
-            )}
-            <ChatHistory chatHistory={chatHistory} isLoading={isLoading} />
-            <Loading isLoading={isLoading} />
-          </div>
+      <section className="workspace">
+        <header className="topbar"><button className="icon-button mobile-menu" aria-label="Open navigation" onClick={() => setSidebarOpen(true)}><FiMenu /></button><div className="thread-title"><span>{activeChat.title}</span><FiChevronDown /></div><div className="top-actions"><span className="privacy-pill"><i /> Local & private</span><button className="icon-button" aria-label="Rename conversation"><FiEdit3 /></button></div></header>
+        <div className="conversation">
+          {!activeChat.messages.length ? (
+            <section className="hero">
+              <div className="orb-wrap"><div className="orb"><span /><span /><span /><HiOutlineSparkles /></div></div>
+              <p className="eyebrow">LOCAL INTELLIGENCE SYSTEM</p><h1>What will we <em>discover?</em></h1><p className="hero-copy">Your private thinking partner for ideas, answers, code, strategy, and everything in between.</p>
+              <div className="starter-grid">{STARTERS.map((starter) => <button key={starter.title} onClick={() => sendMessage(starter.prompt)}><b>{starter.icon}</b><span><strong>{starter.title}</strong><small>{starter.prompt}</small></span><FiArrowUp /></button>)}</div>
+            </section>
+          ) : <ChatHistory messages={activeChat.messages} streaming={isSending} onRetry={retryLast} />}
+          {error && <div className="error-banner"><span>{error}</span><button onClick={checkStatus}>Check again</button></div>}
         </div>
-
-        {/* Input and Upload Section */}
-        <div className="w-full px-4 pt-4 flex-shrink-0 flex mb-5 justify-center items-center space-x-2">
-          {/* Upload File */}
-          <div className="relative">
-            <input
-              type="file"
-              id="fileUpload"
-              accept=".png, .jpg, .jpeg, .pdf"
-              onChange={(e) => {
-                const file = e.target.files[0];
-                if (file) {
-                  setSelectedFile(file);
-                }
-              }}
-              className="hidden"
-            />
-            <label
-              htmlFor="fileUpload"
-              className="cursor-pointer flex items-center justify-center w-12 h-12 bg-[#23272A] rounded-full text-[#7289DA] hover:text-white hover:bg-[#7289DA] transition-colors"
-            >
-              <BsPaperclip size={20} />
-            </label>
-          </div>
-
-          {/* Text Input */}
-          <div className="relative flex-grow">
-            {selectedFile && (
-              <div className="absolute left-2 top-2 z-10">
-                <div className="relative">
-                  {selectedFile.type.startsWith("image/") ? (
-                    <>
-                      <img
-                        src={URL.createObjectURL(selectedFile)}
-                        alt="Preview"
-                        className="w-10 h-10 object-cover rounded"
-                      />
-                      <button
-                        onClick={() => setSelectedFile(null)}
-                        className="absolute -top-1 -right-1 w-4 h-4 bg-gray-500 text-white text-xs rounded-full flex items-center justify-center hover:bg-gray-400"
-                        title="Remove"
-                      >
-                        <AiOutlineClose size={10} />
-                      </button>
-                    </>
-                  ) : selectedFile.type === "application/pdf" ? (
-                    <>
-                      <div className="w-10 h-10 bg-red-400 text-white flex items-center justify-center rounded text-sm">
-                        <FaFilePdf size={18} />
-                      </div>
-                      <button
-                        onClick={() => setSelectedFile(null)}
-                        className="absolute -top-1 -right-1 w-4 h-4 bg-gray-500 text-white text-xs rounded-full flex items-center justify-center hover:bg-gray-400"
-                        title="Remove"
-                      >
-                        <AiOutlineClose size={10} />
-                      </button>
-                    </>
-                  ) : null}
-                </div>
-              </div>
-            )}
-
-            <div className="relative w-full">
-              <textarea
-                value={userInput}
-                onChange={(e) => setUserInput(e.target.value)}
-                onKeyDown={handleKeyPress}
-                rows={1}
-                placeholder=" "
-                className={`w-full resize-none text-[#99AAB5] py-4 pr-14 rounded-xl bg-[#23272A]/60 backdrop-blur-md focus:outline-none focus:ring-2 max-h-[300px] overflow-y-auto placeholder-transparent border-2 border-[#7289DA] ${
-                  selectedFile ? "pl-20" : "pl-4"
-                }`}
-              />
-              {!userInput && (
-                <div
-                  className={`absolute top-1/2 transform -translate-y-1/2 text-[#7289DA] pointer-events-none ${
-                    selectedFile ? "left-20" : "left-4"
-                  }`}
-                >
-                  <div className="flex items-center space-x-2 text-sm">
-                    <span className="font-semibold text-[16px]">
-                      TalkBot . . .
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <button
-              className="absolute right-2 top-1/2 transform -translate-y-[57%] w-10 h-10 rounded-full bg-[#7289DA] text-white flex items-center justify-center hover:bg-[#5a73b7] transition-colors"
-              onClick={sendMessage}
-              disabled={isLoading || (userInput.trim() === "" && !selectedFile)}
-            >
-              <BsSend size={20} />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Sidebar */}
-      <div
-        className={`md:relative md:translate-x-0 fixed top-0 right-0 z-40 w-full md:w-[20%] h-full backdrop-blur-sm bg-[#23272A] p-4 transition-transform duration-300 ${
-          isSidebarVisible ? "translate-x-0" : "translate-x-full"
-        }`}
-      >
-        <button
-          className="absolute top-4 left-4 text-[#99AAB5] md:hidden "
-          onClick={() => setIsSidebarVisible((prev) => !prev)}
-        >
-          <BsFillGearFill size={24} />
-        </button>
-        <button
-          className="mb-4 font-heading w-full py-2 text-xl rounded-lg bg-[#99AAB5] text-white hover:bg-[#7289DA] focus:outline-none aniBtn"
-          onClick={clearChat}
-        >
-          <p className="transition-transform duration-300 ease-in-out transform hover:scale-75">
-            Clear Chat
-          </p>
-          <div className="liquid w-24"></div>
-        </button>
-        <div className="flex-grow overflow-y-auto p-4">
-          <h2 className="relative text-[#7289DA] tracking-wide font-bold mb-4">
-            Previously Questions
-            <span className="absolute bottom-0 left-0 w-full h-[1px] bg-gradient-to-r from-[#00000092] to-transparent"></span>
-          </h2>
-          <ul className="list-disc pl-2 text-[#99AAB5] space-y-2">
-            {questionsList.map((question, index) => (
-              <li
-                key={index}
-                className="cursor-pointer hover:text-[#7289DA] truncate max-w-full flex items-center uppercase font-semibold bg-[#00000020] p-1 rounded-xl px-2"
-                onClick={() => handleQuestionClick(question)}
-              >
-                <span className="flex-shrink-0 mr-2">•</span>
-                <span className="truncate">{question}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-
-      <button
-        className="fixed top-4 right-4 z-50 p-2 rounded-full bg-[#7289DA] text-white shadow-lg hover:bg-[#5a73b7] md:hidden"
-        onClick={() => setIsSidebarVisible((prev) => !prev)}
-      >
-        <BsFillGearFill size={24} />
-      </button>
-    </div>
+        <div className="composer-wrap"><div className={`composer ${isSending ? "is-sending" : ""}`}><textarea ref={textareaRef} value={input} onChange={handleInput} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); sendMessage(); } }} placeholder="Ask FindBot anything…" rows="1" /><div className="composer-bottom"><span>FindBot can make mistakes. Verify important information.</span>{isSending ? <button className="stop-button" onClick={() => abortRef.current?.abort()} aria-label="Stop generating"><i /></button> : <button className="send-button" onClick={() => sendMessage()} disabled={!input.trim()} aria-label="Send message"><FiArrowUp /></button>}</div></div></div>
+      </section>
+    </main>
   );
 }
 
