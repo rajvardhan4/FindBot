@@ -27,7 +27,7 @@ export default [
     },
   },
   {
-    files: ["server.js"],
+    files: ["server.js", "api/**/*.js"],
     languageOptions: { ecmaVersion: "latest", sourceType: "module", globals: { ...globals.node, ...globals.es2022 } },
     rules: js.configs.recommended.rules,
   },
