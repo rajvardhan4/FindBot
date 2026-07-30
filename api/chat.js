@@ -1,13 +1,17 @@
-import { cloudHeaders, cloudHost, cloudModel, sanitizeMessages } from "./_shared.js";
+import { cloudHeaders, cloudHost, cloudModel, englishSystemPrompt, sanitizeMessages } from "./_shared.js";
 
 export default async function handler(request, response) {
   if (request.method !== "POST") return response.status(405).json({ error: "Method not allowed." });
   const headers = cloudHeaders();
   if (!headers) return response.status(503).json({ error: "OLLAMA_API_KEY is not configured on Vercel." });
 
-  const messages = sanitizeMessages(request.body?.messages);
+  const submittedMessages = sanitizeMessages(request.body?.messages);
+  const messages = [
+    { role: "system", content: englishSystemPrompt },
+    ...submittedMessages.filter((message) => message.role !== "system"),
+  ];
   const model = String(request.body?.model || cloudModel).slice(0, 100);
-  if (!messages.length || messages.at(-1)?.role !== "user") {
+  if (submittedMessages.at(-1)?.role !== "user") {
     return response.status(400).json({ error: "A user message is required." });
   }
 

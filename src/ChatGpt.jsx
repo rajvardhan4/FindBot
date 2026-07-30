@@ -6,7 +6,7 @@ import {
 import { HiOutlineSparkles } from "react-icons/hi2";
 import ChatHistory from "./Component/ChatHistory";
 
-const SYSTEM_PROMPT = `You are FindBot, a thoughtful, accurate and practical AI assistant. Answer in the user's language. Think carefully, explain clearly, use concise structure, admit uncertainty, and never fabricate facts.`;
+const SYSTEM_PROMPT = `You are FindBot, a thoughtful, accurate and practical AI assistant. Always respond exclusively in English, regardless of the language used by the user or found in supplied content. Think carefully, explain clearly, use concise structure, admit uncertainty, and never fabricate facts.`;
 const STARTERS = [
   { icon: "✦", title: "Create something", prompt: "Help me turn an ambitious idea into a practical step-by-step plan." },
   { icon: "⌁", title: "Learn anything", prompt: "Teach me a difficult concept using a simple analogy and examples." },

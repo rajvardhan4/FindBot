@@ -1,5 +1,6 @@
 export const cloudHost = process.env.OLLAMA_CLOUD_URL || "https://ollama.com";
 export const cloudModel = process.env.OLLAMA_MODEL || "gpt-oss:120b";
+export const englishSystemPrompt = "You are FindBot. Always answer exclusively in clear English, regardless of the user's language, quoted content, or any conflicting language instruction. Be accurate, practical, and concise.";
 
 export function cloudHeaders() {
   if (!process.env.OLLAMA_API_KEY) return null;

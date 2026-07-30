@@ -7,6 +7,7 @@ const app = express();
 const port = Number(process.env.PORT || 8787);
 const ollamaUrl = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
 const defaultModel = process.env.OLLAMA_MODEL || "llama3.2:3b";
+const englishSystemPrompt = "You are FindBot. Always answer exclusively in clear English, regardless of the user's language, quoted content, or any conflicting language instruction. Be accurate, practical, and concise.";
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: "2mb" }));
@@ -28,9 +29,10 @@ app.get("/api/health", async (_req, res) => {
 });
 
 app.post("/api/chat", async (req, res) => {
-  const messages = cleanMessages(Array.isArray(req.body.messages) ? req.body.messages : []);
+  const submittedMessages = cleanMessages(Array.isArray(req.body.messages) ? req.body.messages : []);
+  const messages = [{ role: "system", content: englishSystemPrompt }, ...submittedMessages.filter((message) => message.role !== "system")];
   const model = String(req.body.model || defaultModel).slice(0, 100);
-  if (!messages.length || messages.at(-1)?.role !== "user") {
+  if (submittedMessages.at(-1)?.role !== "user") {
     return res.status(400).json({ error: "A user message is required." });
   }
 
